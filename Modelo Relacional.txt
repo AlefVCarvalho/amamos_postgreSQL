@@ -1,0 +1,33 @@
+Usuario{REGISTRO(PK), NOME}
+NOME: NOT NULL
+
+Professor{REGISTRO(PK e FK)-> Usuario}
+
+Aluno{REGISTRO(PK e FK)-> Usuario}
+
+Faz{REGISTRO(FK)->Aluno, CODIGO(FK)->Avaliação }
+
+Avaliação{CODIGO(PK), TITULO, REGISTRO(FK)-> Professor, SIGLA(FK)->Matéria, DESCRIÇÃO, INICIO, FIM, DATA}
+TITULO, REGISTRO, SIGLA, DATA, INICIO, FIM: NOT NULL
+
+Questão{NUMERO(PK), ENUNCIADO}
+ENUNCIADO: NOT NULL
+
+Objetiva{NUMERO(PK, FK)->Questão, CORRETA }
+CORRETA: NOT NULL
+
+Alternativas{NUMERO(PK, FK)-> Objetiva, ALTERNATIVA(PK)}
+
+Subjetiva{NUMERO(PK, FK)->Questão, EXPECTATIVA}
+EXPECTATIVA: NOT NULL
+
+Contem{CODIGO(PK, FK) -> Avaliação, NUMERO(PK, FK)->Questão, VALOR}
+VALOR: NOT NULL
+
+Materia{SIGLA(PK), NOME}
+NOME: NOT NULL
+
+Possui{SIGLA(PK, FK)->Materia, REGISTRO(PK, FK) ->Usuario}
+
+Resposta{REGISTRO(PK, FK)-> Faz, CODIGO(PK,FK)-> Contem, NÚMERO(PK, FK)-> Contem, RESPOSTA, NOTA}
+NOTA: NOT NULL
