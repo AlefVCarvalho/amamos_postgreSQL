@@ -1,5 +1,21 @@
+-- =====================================================
+-- Sistema de Avaliacoes - Script de criacao (PostgreSQL)
+-- Versao final, alinhada ao DER:
+--  * Avaliacao (CODIGO) aplicada por Professor e pertencente a Materia
+--  * Faz (Aluno N:N Avaliacao) e Contem (Avaliacao N:N Questao)
+--  * Resposta (relacionamento entre Faz e Contem), com RESPOSTA e NOTA
+--  * Especializacoes disjuntas e totais (Usuario e Questao)
+--  * Nota automatica nas objetivas e view de nota total
+--
+-- ATENCAO: o script APAGA e recria todas as tabelas do banco
+-- (ver bloco "Limpeza"). Rode-o em um banco de estudo/teste.
+-- =====================================================
+
 BEGIN;
 
+-- -----------------------------------------------------
+-- Limpeza (permite rodar o script mais de uma vez)
+-- -----------------------------------------------------
 DROP VIEW  IF EXISTS Nota_Total   CASCADE;
 DROP TABLE IF EXISTS Resposta     CASCADE;
 DROP TABLE IF EXISTS Possui       CASCADE;
@@ -19,6 +35,11 @@ DROP FUNCTION IF EXISTS fn_usuario_disjunto() CASCADE;
 DROP FUNCTION IF EXISTS fn_usuario_total()    CASCADE;
 DROP FUNCTION IF EXISTS fn_questao_disjunta() CASCADE;
 DROP FUNCTION IF EXISTS fn_questao_total()    CASCADE;
+
+-- =====================================================
+-- TABELAS
+-- =====================================================
+
 -- Usuario
 CREATE TABLE Usuario (
     REGISTRO  INTEGER      NOT NULL,
@@ -26,7 +47,7 @@ CREATE TABLE Usuario (
     CONSTRAINT pk_usuario PRIMARY KEY (REGISTRO)
 );
 
--- Professor 
+-- Professor (especializacao de Usuario)
 CREATE TABLE Professor (
     REGISTRO  INTEGER NOT NULL,
     CONSTRAINT pk_professor PRIMARY KEY (REGISTRO),
@@ -35,7 +56,7 @@ CREATE TABLE Professor (
         ON UPDATE CASCADE ON DELETE CASCADE
 );
 
--- Aluno 
+-- Aluno (especializacao de Usuario)
 CREATE TABLE Aluno (
     REGISTRO  INTEGER NOT NULL,
     CONSTRAINT pk_aluno PRIMARY KEY (REGISTRO),
@@ -51,7 +72,7 @@ CREATE TABLE Materia (
     CONSTRAINT pk_materia PRIMARY KEY (SIGLA)
 );
 
--- Possui 
+-- Possui (Usuario N:N Materia)
 CREATE TABLE Possui (
     SIGLA     VARCHAR(10) NOT NULL,
     REGISTRO  INTEGER     NOT NULL,
@@ -65,6 +86,8 @@ CREATE TABLE Possui (
 );
 
 -- Avaliacao
+--   REGISTRO : relacionamento APLICA    (Professor 1 : N Avaliacao)
+--   SIGLA    : relacionamento PERTENCE  (Materia   1 : N Avaliacao)
 CREATE TABLE Avaliacao (
     CODIGO     INTEGER      NOT NULL,
     TITULO     VARCHAR(150) NOT NULL,
@@ -84,10 +107,11 @@ CREATE TABLE Avaliacao (
         ON UPDATE CASCADE ON DELETE RESTRICT
 );
 
--- Faz 
+-- Faz (Aluno N:N Avaliacao)
 CREATE TABLE Faz (
     REGISTRO  INTEGER NOT NULL,
     CODIGO    INTEGER NOT NULL,
+    RESPONDIDA BOOLEAN NOT NULL DEFAULT FALSE,
     CONSTRAINT pk_faz PRIMARY KEY (REGISTRO, CODIGO),
     CONSTRAINT fk_faz_aluno FOREIGN KEY (REGISTRO)
         REFERENCES Aluno (REGISTRO)
@@ -104,7 +128,7 @@ CREATE TABLE Questao (
     CONSTRAINT pk_questao PRIMARY KEY (NUMERO)
 );
 
--- Objetiva 
+-- Objetiva (especializacao de Questao)
 CREATE TABLE Objetiva (
     NUMERO   INTEGER      NOT NULL,
     CORRETA  VARCHAR(255) NOT NULL,
@@ -114,23 +138,26 @@ CREATE TABLE Objetiva (
         ON UPDATE CASCADE ON DELETE CASCADE
 );
 
--- Alternativas
+-- Alternativas (atributo multivalorado de Objetiva)
 CREATE TABLE Alternativas (
     NUMERO       INTEGER      NOT NULL,
     ALTERNATIVA  VARCHAR(255) NOT NULL,
+    DESCRICAO   VARCHAR(500) NOT NULL DEFAULT '',
     CONSTRAINT pk_alternativas PRIMARY KEY (NUMERO, ALTERNATIVA),
     CONSTRAINT fk_alternativas_objetiva FOREIGN KEY (NUMERO)
         REFERENCES Objetiva (NUMERO)
         ON UPDATE CASCADE ON DELETE CASCADE
 );
 
-
+-- A resposta correta precisa ser uma das alternativas.
+-- A FK e adiada ate o COMMIT, pois Objetiva e Alternativas se referenciam:
+-- cadastre as duas na mesma transacao (BEGIN ... COMMIT).
 ALTER TABLE Objetiva
     ADD CONSTRAINT fk_objetiva_correta FOREIGN KEY (NUMERO, CORRETA)
         REFERENCES Alternativas (NUMERO, ALTERNATIVA)
         DEFERRABLE INITIALLY DEFERRED;
 
--- Subjetiva 
+-- Subjetiva (especializacao de Questao)
 CREATE TABLE Subjetiva (
     NUMERO       INTEGER NOT NULL,
     EXPECTATIVA  TEXT    NOT NULL,
@@ -140,7 +167,8 @@ CREATE TABLE Subjetiva (
         ON UPDATE CASCADE ON DELETE CASCADE
 );
 
--- Contem 
+-- Contem (Avaliacao N:N Questao)
+-- A mesma questao pode estar em varias avaliacoes.
 CREATE TABLE Contem (
     CODIGO  INTEGER      NOT NULL,
     NUMERO  INTEGER      NOT NULL,
@@ -155,13 +183,14 @@ CREATE TABLE Contem (
     CONSTRAINT ck_contem_valor CHECK (VALOR >= 0)
 );
 
--- Resposta 
+-- Resposta (relacionamento entre Faz e Contem)
+-- NOTA nula indica resposta subjetiva ainda nao corrigida. Nota zero e uma correcao valida.
 CREATE TABLE Resposta (
     REGISTRO  INTEGER      NOT NULL,
     CODIGO    INTEGER      NOT NULL,
     NUMERO    INTEGER      NOT NULL,
     RESPOSTA  TEXT         NOT NULL,
-    NOTA      NUMERIC(5,2) NOT NULL DEFAULT 0,
+    NOTA      NUMERIC(5,2),
     CONSTRAINT pk_resposta PRIMARY KEY (REGISTRO, CODIGO, NUMERO),
     CONSTRAINT fk_resposta_faz FOREIGN KEY (REGISTRO, CODIGO)
         REFERENCES Faz (REGISTRO, CODIGO)
@@ -169,11 +198,14 @@ CREATE TABLE Resposta (
     CONSTRAINT fk_resposta_contem FOREIGN KEY (CODIGO, NUMERO)
         REFERENCES Contem (CODIGO, NUMERO)
         ON UPDATE CASCADE ON DELETE CASCADE,
-    CONSTRAINT ck_resposta_nota CHECK (NOTA >= 0)
+    CONSTRAINT ck_resposta_nota CHECK (NOTA IS NULL OR NOTA >= 0)
 );
 
+-- =====================================================
+-- REGRAS DO DER: especializacoes disjuntas e totais
+-- =====================================================
 
--- um usuario nao pode ser professor e aluno ao mesmo tempo
+-- Disjuncao: um usuario nao pode ser professor e aluno ao mesmo tempo
 CREATE FUNCTION fn_usuario_disjunto() RETURNS trigger AS $$
 BEGIN
     IF TG_TABLE_NAME = 'professor' THEN
@@ -213,7 +245,7 @@ AFTER INSERT ON Usuario
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION fn_usuario_total();
 
---uma questao nao pode ser objetiva e subjetiva ao mesmo tempo
+-- Disjuncao: uma questao nao pode ser objetiva e subjetiva ao mesmo tempo
 CREATE FUNCTION fn_questao_disjunta() RETURNS trigger AS $$
 BEGIN
     IF TG_TABLE_NAME = 'objetiva' THEN
@@ -253,7 +285,9 @@ AFTER INSERT ON Questao
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION fn_questao_total();
 
--- correcao automatica das objetivas e validacao da nota
+-- =====================================================
+-- RESPOSTA: correcao automatica das objetivas e validacao da nota
+-- =====================================================
 CREATE FUNCTION fn_resposta_nota() RETURNS trigger AS $$
 DECLARE
     v_valor    NUMERIC(5,2);
@@ -296,7 +330,9 @@ CREATE TRIGGER trg_resposta_nota
 BEFORE INSERT OR UPDATE ON Resposta
 FOR EACH ROW EXECUTE FUNCTION fn_resposta_nota();
 
--- NOTA TOTAL 
+-- =====================================================
+-- NOTA TOTAL (atributo derivado de Faz)
+-- =====================================================
 CREATE VIEW Nota_Total AS
 SELECT f.REGISTRO,
        u.NOME,
